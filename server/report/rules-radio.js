@@ -1,34 +1,100 @@
 'use strict';
 
 const { bufferbloatFix } = require('./fixes');
+const { findSplitNetwork, splitNetworkFix } = require('./split');
 const { ratio, fmtMbps } = require('./context');
+
+function linkName(kind) {
+  if (kind === 'wifi') return 'Wi-Fi';
+  if (kind === 'ethernet') return 'Ethernet';
+  return 'Link';
+}
+
+function rankedSpeed(ctx) {
+  return ctx.speed
+    .filter((row) => typeof row.responsiveness_rpm === 'number')
+    .slice()
+    .sort((a, b) => a.responsiveness_rpm - b.responsiveness_rpm);
+}
+
+function lowResponsiveness(ctx) {
+  return rankedSpeed(ctx).find((row) => row.responsiveness_band === 'low') || null;
+}
+
+function contrastRow(ranked, worst) {
+  return ranked.find((row) => row !== worst && row.kind !== worst.kind)
+    || ranked.find((row) => row !== worst)
+    || null;
+}
+
+function bufferbloatDetail(ctx) {
+  const ranked = rankedSpeed(ctx);
+  const worst = lowResponsiveness(ctx) || ranked[0];
+  const other = contrastRow(ranked, worst);
+  if (worst && other) {
+    return `${linkName(worst.kind)} responsiveness of ${worst.responsiveness_rpm} RPM (${worst.responsiveness_band}) against ${linkName(other.kind)}'s ${other.responsiveness_rpm} RPM.`;
+  }
+  return `Responsiveness is ${worst.responsiveness_rpm} RPM (${worst.responsiveness_band}) while downlink ${fmtMbps(worst.down_mbps)} still meets the plan.`;
+}
+
+function vendorForRow(ctx, row) {
+  const list = (ctx.router && ctx.router.gateways) || [];
+  const match = list.find((item) => item && row && (item.interface === row.device || item.device === row.device));
+  if (match && match.vendor && match.vendor !== 'unknown' && match.vendor !== 'isp-openwrt') return match.vendor;
+  if (ctx.vendor && ctx.vendor !== 'isp-openwrt') return ctx.vendor;
+  return (match && match.vendor) || ctx.vendor;
+}
+
+function bufferbloatMatches(ctx) {
+  return ctx.speed.some((row) => {
+    if (row.responsiveness_band !== 'low') return false;
+    if (!(ctx.planDown > 0)) return true;
+    const measured = ratio(row.down_mbps, ctx.planDown);
+    return measured != null && measured >= 0.8;
+  });
+}
 
 const radioRules = [
   {
     id: 'bufferbloat',
-    matches: (ctx) => ctx.speed.some((row) => {
-      if (row.responsiveness_band !== 'low') return false;
-      if (!(ctx.planDown > 0)) return true;
-      const r = ratio(row.down_mbps, ctx.planDown);
-      return r != null && r >= 0.8;
+    matches: bufferbloatMatches,
+    bottleneck: (ctx) => ({
+      id: 'bufferbloat',
+      title: 'Bufferbloat: latency under load is poor',
+      detail: bufferbloatDetail(ctx)
     }),
-    bottleneck: (ctx) => {
-      const row = ctx.speed.find((item) => item.responsiveness_band === 'low');
-      return {
-        id: 'bufferbloat',
-        title: 'Bufferbloat: latency under load is poor',
-        detail: `Responsiveness is ${row.responsiveness_rpm} RPM (low) while downlink ${fmtMbps(row.down_mbps)} still meets the plan.`
-      };
-    },
-    cheapestFix: (ctx) => bufferbloatFix(ctx.vendor),
-    nextOptions: () => ([
-      {
+    cheapestFix: (ctx) => bufferbloatFix(vendorForRow(ctx, lowResponsiveness(ctx))),
+    nextOptions: (ctx) => {
+      const options = [];
+      const split = findSplitNetwork(ctx);
+      if (split) options.push(splitNetworkFix(split));
+      options.push({
         action: 'Pause large uploads during calls if the router has no shaper.',
         reason: 'An upload filling the plan is the usual way an unshaped home link adds delay.'
-      },
-      {
+      });
+      options.push({
         action: 'Retest after the setting change and compare RPM, not just megabits.',
         reason: 'A shaper that is working moves RPM out of the low band.'
+      });
+      return options;
+    }
+  },
+  {
+    id: 'double-nat',
+    matches: (ctx) => Boolean(findSplitNetwork(ctx)),
+    bottleneck: (ctx) => {
+      const split = findSplitNetwork(ctx);
+      return {
+        id: 'double-nat',
+        title: 'double NAT or split networks',
+        detail: `Ethernet (${split.isp.ip}) and Wi-Fi (${split.mesh.ip}) are different private subnets. One router is ${split.isp.label || 'an ISP gateway'} and the other is ${split.mesh.label || split.mesh.vendor}.`
+      };
+    },
+    cheapestFix: (ctx) => splitNetworkFix(findSplitNetwork(ctx)),
+    nextOptions: () => ([
+      {
+        action: 'Retest after the ISP gateway is bridged, with the Mac joined only to the mesh subnet.',
+        reason: 'One private subnet means the speed test and the gateway probe are looking at the same router.'
       }
     ])
   },

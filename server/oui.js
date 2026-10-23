@@ -46,6 +46,14 @@ const OUI = {
   'F01898': 'Apple'
 };
 
+// IEEE MA-L assignments to eero inc. Subset, including 68:4A:76.
+const EERO_OUIS = [
+  '684A76', '1422DB', '48DD0C', '08F01E', '6CAEF6', '4C0143', '00AB48',
+  '089BF1', '0C1C1A', '189088', '3C5CF1', '605F8D', '80DA13', '98ED7E',
+  '9CA570', '30578E', '64DAED', '80B97A', 'C4F174'
+];
+for (const prefix of EERO_OUIS) OUI[prefix] = 'eero';
+
 function normalizeMac(mac) {
   if (typeof mac !== 'string') return null;
   const parts = mac.trim().toLowerCase().replace(/-/g, ':').split(':');
@@ -83,6 +91,7 @@ function lookupOui(mac) {
 
 module.exports = {
   OUI,
+  EERO_OUIS,
   normalizeMac,
   isLocallyAdministered,
   lookupOui

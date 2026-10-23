@@ -15,6 +15,21 @@ function ouiHit(signals, vendors, points, label) {
   return { points, label, evidence: hits };
 }
 
+function gatewayHit(signals, address, points) {
+  const hits = signals.filter((s) => s.source === 'gateway' && s.detail === address);
+  if (!hits.length) return null;
+  return { points, label: 'gateway', evidence: hits };
+}
+
+function scored(hits, points) {
+  if (!hits.length) return null;
+  const sources = [];
+  for (const item of hits) {
+    if (!sources.includes(item.source)) sources.push(item.source);
+  }
+  return { points, evidence: hits.slice(0, 6), sources };
+}
+
 function scoreOf(parts) {
   const present = parts.filter(Boolean);
   if (!present.length) return null;
@@ -45,9 +60,28 @@ const adapters = [
     howToChange: 'Change these in LuCI at the gateway, or over SSH. This tool does not log in and does not change them.',
     read: null,
     match(signals) {
-      return scoreOf([
-        textHit(signals, /openwrt|luci/i, 5, 'openwrt')
-      ]);
+      const hits = signals.filter((s) => {
+        const detail = String(s.detail);
+        // MiniUPnPd's "OpenWrt" banner is not a LuCI admin page.
+        if (/miniupnpd/i.test(detail) && !/\bluci\b/i.test(detail)) return false;
+        return /openwrt|\bluci\b/i.test(detail);
+      });
+      return scored(hits, 5);
+    }
+  },
+  {
+    id: 'isp-openwrt',
+    label: 'ISP gateway (OpenWrt-based firmware)',
+    localApi: null,
+    adjustableSettings: [
+      'Bridge or passthrough mode, when the ISP gateway offers it',
+      'Turn off the ISP gateway Wi-Fi so one router serves the home'
+    ],
+    howToChange: 'MiniUPnPd mentioning OpenWrt is the ISP firmware banner, not a LuCI page. Bridge or passthrough mode is changed in the ISP gateway if it allows it. This tool does not log in.',
+    read: null,
+    match(signals) {
+      const hits = signals.filter((s) => /openwrt/i.test(s.detail) && /miniupnpd/i.test(s.detail));
+      return scored(hits, 2);
     }
   },
   {
@@ -104,7 +138,9 @@ const adapters = [
     read: null,
     match(signals) {
       return scoreOf([
-        textHit(signals, /\beero\b/i, 5, 'eero')
+        textHit(signals, /\beero\b/i, 5, 'eero'),
+        ouiHit(signals, ['eero'], 5, 'oui'),
+        gatewayHit(signals, '192.168.4.1', 2)
       ]);
     }
   },

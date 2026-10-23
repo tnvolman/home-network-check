@@ -2,23 +2,34 @@
 
 const { MIN_PREFIX, MAX_PREFIX } = require('./constants');
 
-// macOS VPN and tunnel devices. A 10/8 on utun0 must not become a probe target.
+// Known VPN device names. Probe selection does not use this denylist:
+// ZeroTier feth* and OpenVPN tap* are virtual too, so eligibility is an allowlist.
 function isTunnelDevice(device) {
   return /^(utun|ipsec|ppp|tun|wg)/i.test(String(device || ''));
 }
 
-// Probes use only the non-tunnel interface that holds the default route.
-function probeInterfaces(interfaces, routeInterface) {
-  if (!routeInterface || isTunnelDevice(routeInterface)) return [];
+// Wi-Fi and Ethernet from `networksetup -listallhardwareports` when that list
+// is present. Otherwise only en0, en1, … — never feth, tap, utun, or bridge.
+function deviceAllowed(device, allowlist) {
+  const name = String(device || '');
+  if (Array.isArray(allowlist) && allowlist.length > 0) return allowlist.includes(name);
+  return /^en\d+$/.test(name);
+}
+
+// Active physical interfaces. Each prefix is its own probe guard.
+// A missing default route probes nothing. A virtual default route does not
+// hide Wi-Fi or Ethernet; those prefixes stay open.
+function probeInterfaces(interfaces, routeInterface, allowlist) {
+  if (!routeInterface) return [];
   return (interfaces || []).filter((iface) => {
-    if (!iface || iface.device !== routeInterface) return false;
-    if (isTunnelDevice(iface.device)) return false;
+    if (!iface || !deviceAllowed(iface.device, allowlist)) return false;
     if (iface.up === false) return false;
     return Boolean(iface.address && iface.netmask);
   }).map((iface) => ({
     device: iface.device,
     address: iface.address,
-    netmask: iface.netmask
+    netmask: iface.netmask,
+    gateway: iface.gateway || null
   }));
 }
 
@@ -97,7 +108,7 @@ function isInLocalSubnet(ip, interfaces) {
   const ipn = ipv4ToInt(ip);
   const targetLinkLocal = masked(ipn, 0xffff0000) === 0xa9fe0000;
   for (const iface of interfaces) {
-    if (!iface || isTunnelDevice(iface.device) || !isRfc1918OrLinkLocal(iface.address)) continue;
+    if (!iface || !deviceAllowed(iface.device) || !isRfc1918OrLinkLocal(iface.address)) continue;
     const prefix = prefixLength(iface.netmask);
     if (prefix < MIN_PREFIX || prefix > MAX_PREFIX) continue;
     const an = ipv4ToInt(iface.address);
@@ -163,6 +174,7 @@ module.exports = {
   ipv4ToInt,
   isRfc1918OrLinkLocal,
   isTunnelDevice,
+  deviceAllowed,
   probeInterfaces,
   prefixLength,
   isInLocalSubnet,

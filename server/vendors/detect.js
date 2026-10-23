@@ -34,6 +34,7 @@ function signalsFrom(input) {
     const oui = lookupOui(input.gateway_mac);
     if (oui.vendor) push('oui', oui.vendor, { vendor: oui.vendor });
   }
+  if (input.gateway_ip) push('gateway', input.gateway_ip);
   for (const name of input.hostnames || []) push('hostname', name);
   return signals;
 }
@@ -93,6 +94,11 @@ function detectVendor(input) {
       detail: `Tied with ${tied.slice(1).map((row) => row.adapter.id).join(', ')}.`,
       path: null
     });
+  }
+  // 192.168.4.1 is a common LAN address. It names eero only at low confidence
+  // until an OUI or another source agrees.
+  if (best.adapter.id === 'eero' && best.hit.sources.length === 1 && best.hit.sources[0] === 'gateway') {
+    confidence = 'low';
   }
   return {
     vendor: best.adapter.id,

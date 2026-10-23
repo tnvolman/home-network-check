@@ -33,4 +33,14 @@ function deviceNameOk(device) {
   return typeof device === 'string' && /^[a-z][a-z0-9]{0,15}$/.test(device);
 }
 
-module.exports = { parseHardwarePorts, classifyPort, deviceNameOk };
+function physicalDeviceNames(ports) {
+  const names = [];
+  for (const port of ports || []) {
+    if (!port || (port.kind !== 'wifi' && port.kind !== 'ethernet')) continue;
+    if (!deviceNameOk(port.device) || names.includes(port.device)) continue;
+    names.push(port.device);
+  }
+  return names;
+}
+
+module.exports = { parseHardwarePorts, classifyPort, deviceNameOk, physicalDeviceNames };

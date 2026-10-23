@@ -6,6 +6,17 @@ function runCommand(file, args, options = {}) {
   const timeoutMs = options.timeoutMs == null ? 10000 : options.timeoutMs;
   const maxBytes = options.maxBytes == null ? 512 * 1024 : options.maxBytes;
   return new Promise((resolve) => {
+    if (process.env.HNC_SKIP_NETWORK === '1' && file === 'networkQuality') {
+      resolve({
+        ok: false,
+        code: null,
+        stdout: '',
+        stderr: 'HNC_SKIP_NETWORK',
+        timedOut: false,
+        spawnError: true
+      });
+      return;
+    }
     let child;
     try {
       child = spawn(file, args, {
