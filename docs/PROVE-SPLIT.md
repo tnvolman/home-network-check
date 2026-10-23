@@ -21,7 +21,7 @@ Today the file is one script of roughly 700 lines: helpers and fixtures, seven s
 | `scripts/prove/tools-speed.js` | "speed_test skips a down interface and will not ping a public gateway". |
 | `scripts/prove/tools-discover.js` | "discover fetches only in-subnet UPnP descriptions" and "discover ignores a VPN 10/8 and caps location fetches". |
 | `scripts/prove/tools-rest.js` | "router_detect GETs only a probeable gateway" and "wifi_sample and report do not touch the network when injected or unsupported". |
-| `scripts/prove/mcp.js` | "mcp initialize and tools/list handshake", including the live `speed_test` call that expects `unsupported OS` off macOS. |
+| `scripts/prove/mcp.js` | "mcp initialize and tools/list handshake". The child is spawned with `HNC_SKIP_NETWORK=1`, so `speed_test` does not run `networkQuality`. Off macOS the call is still `unsupported OS`. |
 
 `scripts/prove.js` would only require those modules, run the sync checks, then `await` the async checks in the same order, then print `passed` and `failed`.
 

@@ -171,6 +171,14 @@ async function discover(_args = {}, deps = {}) {
         ? 'default gateway is not an IPv4 address; v0.1 does not probe it'
         : null
     },
+    gateways: interfaces.map((iface) => ({
+      interface: iface.device,
+      address: iface.address,
+      netmask: iface.netmask,
+      ip: iface.gateway || null,
+      mac: (arp.find((row) => row.ip === iface.gateway && row.mac) || {}).mac || null,
+      probeable: Boolean(iface.gateway && isProbeable(iface.gateway, [iface]))
+    })),
     host: { interfaces },
     arp: arp.map((row) => Object.assign({}, row, {
       in_local_subnet: isInLocalSubnet(row.ip, interfaces),

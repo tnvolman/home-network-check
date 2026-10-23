@@ -9,7 +9,7 @@ const INSTRUCTIONS = [
   'Call discover, wifi_sample, and speed_test, then router_detect, then report.',
   'Lead the answer with the bottleneck, then the cheapest fix and its one-line reason, then the next options.',
   'speed_test sends measurement traffic off the LAN. Other tools stay on the local link.',
-  'Unicast fetches and the gateway ping run only when the address is inside the host subnet.'
+  'Unicast fetches and gateway pings run only when the address is inside that interface\'s own subnet. Each active non-tunnel interface keeps its own guard. Down interfaces are not pinged.'
 ].join(' ');
 
 const SUPPORTED_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];

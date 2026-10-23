@@ -198,11 +198,23 @@ check('vpn tunnels and non-default interfaces are not local', () => {
   for (const row of raw.slice(2)) assert.strictEqual(subnet.isTunnelDevice(row.device), true, row.device);
   assert.strictEqual(subnet.isTunnelDevice('en0'), false);
   const probes = subnet.probeInterfaces(raw, 'en0');
-  assert.deepStrictEqual(probes.map((item) => item.device), ['en0']);
+  assert.deepStrictEqual(probes.map((item) => item.device), ['en0', 'en5']);
   assert.strictEqual(subnet.isInLocalSubnet('192.168.1.1', probes), true);
+  assert.strictEqual(subnet.isInLocalSubnet('192.168.50.2', probes), true);
+  assert.strictEqual(subnet.isProbeable('192.168.50.2', probes.filter((item) => item.device === 'en0')), false);
+  assert.strictEqual(subnet.isProbeable('192.168.1.1', probes.filter((item) => item.device === 'en5')), false);
   assert.strictEqual(subnet.isInLocalSubnet('10.1.2.3', probes), false);
   assert.strictEqual(subnet.isInLocalSubnet('10.8.0.9', probes), false);
-  assert.strictEqual(subnet.isInLocalSubnet('192.168.50.2', probes), false);
+  const mini = subnet.probeInterfaces([
+    { device: 'en0', address: '192.168.90.50', netmask: '255.255.255.0', up: true },
+    { device: 'en1', address: '192.168.4.20', netmask: '255.255.255.0', up: true },
+    { device: 'utun4', address: '10.0.0.8', netmask: '255.255.255.0', up: true }
+  ], 'en0');
+  assert.deepStrictEqual(mini.map((item) => item.device), ['en0', 'en1']);
+  assert.strictEqual(subnet.isProbeable('192.168.90.1', mini), true);
+  assert.strictEqual(subnet.isProbeable('192.168.4.1', mini), true);
+  assert.strictEqual(subnet.isProbeable('192.168.4.1', mini.filter((item) => item.device === 'en0')), false);
+  assert.strictEqual(subnet.isProbeable('10.0.0.1', mini), false);
   assert.deepStrictEqual(subnet.probeInterfaces(raw, 'utun3'), []);
   assert.strictEqual(subnet.isInLocalSubnet('10.1.2.3', subnet.probeInterfaces(raw, 'utun3')), false);
   assert.strictEqual(subnet.isProbeable('10.1.2.3', raw), false);
@@ -340,13 +352,36 @@ check('vendor detection is detect-only', () => {
   assert.strictEqual(detectVendor({ gateway_mac: '20:e5:2a:aa:bb:cc' }).vendor, 'unknown');
   assert.strictEqual(detectVendor({ gateway_mac: '68:54:fd:aa:bb:cc' }).vendor, 'unknown');
   assert.strictEqual(detectVendor({ mdns_service_types: ['_googlecast._tcp'] }).vendor, 'unknown');
+  assert.strictEqual(oui.lookupOui('68:4a:76:10:20:30').vendor, 'eero');
+  assert.strictEqual(oui.lookupOui('14:22:db:10:20:30').vendor, 'eero');
+  assert.strictEqual(oui.lookupOui('48:dd:0c:10:20:30').vendor, 'eero');
+  const byOui = detectVendor({ gateway_mac: '68:4a:76:10:20:30' });
+  assert.strictEqual(byOui.vendor, 'eero');
+  assert.strictEqual(byOui.confidence, 'medium');
+  assert.strictEqual(byOui.local_api, 'none (app/cloud only)');
+  const byLan = detectVendor({ gateway_ip: '192.168.4.1' });
+  assert.strictEqual(byLan.vendor, 'eero');
+  assert.strictEqual(byLan.confidence, 'low');
+  assert.strictEqual(byLan.local_api, 'none (app/cloud only)');
+  const byBoth = detectVendor({ gateway_mac: '68:4a:76:10:20:30', gateway_ip: '192.168.4.1' });
+  assert.strictEqual(byBoth.vendor, 'eero');
+  assert.strictEqual(byBoth.confidence, 'high');
+  assert.strictEqual(byBoth.local_api, 'none (app/cloud only)');
+  const isp = detectVendor({ ssdp: [{ server: 'EXOS/OpenWrt MiniUPnPd', st: 'upnp:rootdevice' }] });
+  assert.strictEqual(isp.vendor, 'isp-openwrt');
+  assert.strictEqual(isp.label, 'ISP gateway (OpenWrt-based firmware)');
+  assert.strictEqual(isp.confidence, 'low');
+  assert.strictEqual(detectVendor({
+    http_pages: [{ title: 'LuCI', body_excerpt: 'OpenWrt' }],
+    ssdp: [{ server: 'EXOS/OpenWrt MiniUPnPd' }]
+  }).vendor, 'openwrt');
 });
 
 check('report rules are ordered and deterministic', () => {
   assert.deepStrictEqual(RULES.map((rule) => rule.id), [
     'unsupported-os', 'no-data', 'no-uplink', 'wired-below-plan', 'wifi-weak-link',
-    'band-24', 'wifi-below-plan', 'upload-below-plan', 'bufferbloat', 'roaming',
-    'weak-signal', 'healthy'
+    'band-24', 'wifi-below-plan', 'upload-below-plan', 'bufferbloat', 'double-nat',
+    'roaming', 'weak-signal', 'healthy'
   ]);
   const weak = buildReport({
     plan_down_mbps: 300,
@@ -381,6 +416,67 @@ check('report rules are ordered and deterministic', () => {
   });
   assert.strictEqual(bloat.rule_id, 'bufferbloat');
   assert.ok(/Optimize for Conferencing and Gaming/.test(bloat.cheapest_fix.action));
+  const splitHost = {
+    ok: true,
+    gateway: { ip: '192.168.90.1', interface: 'en0' },
+    host: {
+      interfaces: [
+        { device: 'en0', address: '192.168.90.50', netmask: '255.255.255.0' },
+        { device: 'en1', address: '192.168.4.20', netmask: '255.255.255.0' }
+      ]
+    }
+  };
+  const splitRouters = {
+    ok: true,
+    vendor: 'isp-openwrt',
+    label: 'ISP gateway (OpenWrt-based firmware)',
+    confidence: 'low',
+    gateways: [
+      { ip: '192.168.90.1', interface: 'en0', vendor: 'isp-openwrt', label: 'ISP gateway (OpenWrt-based firmware)', confidence: 'low' },
+      { ip: '192.168.4.1', interface: 'en1', vendor: 'eero', label: 'eero', confidence: 'high', local_api: 'none (app/cloud only)' }
+    ]
+  };
+  const ranked = buildReport({
+    discover: splitHost,
+    router_detect: splitRouters,
+    speed_test: speed([
+      { kind: 'ethernet', device: 'en0', status: 'tested', down_mbps: 900, up_mbps: 40, responsiveness_band: 'medium', responsiveness_rpm: 840 },
+      { kind: 'wifi', device: 'en1', status: 'tested', down_mbps: 400, up_mbps: 40, responsiveness_band: 'low', responsiveness_rpm: 126 }
+    ])
+  });
+  assert.strictEqual(ranked.rule_id, 'bufferbloat');
+  assert.strictEqual(ranked.bottleneck.detail, 'Wi-Fi responsiveness of 126 RPM (low) against Ethernet\'s 840 RPM.');
+  assert.ok(/Optimize for Conferencing and Gaming/.test(ranked.cheapest_fix.action));
+  assert.ok(ranked.next_options.some((item) => /bridge\/passthrough/.test(item.action) && /plug the Mini into the eero/.test(item.action) && /double NAT or split networks/.test(item.reason)));
+  const splitOnly = buildReport({
+    discover: splitHost,
+    router_detect: splitRouters,
+    speed_test: speed([
+      { kind: 'ethernet', device: 'en0', status: 'tested', down_mbps: 900, up_mbps: 40, responsiveness_band: 'high', responsiveness_rpm: 2200 },
+      { kind: 'wifi', device: 'en1', status: 'tested', down_mbps: 400, up_mbps: 40, responsiveness_band: 'high', responsiveness_rpm: 2000 }
+    ])
+  });
+  assert.strictEqual(splitOnly.rule_id, 'double-nat');
+  assert.strictEqual(splitOnly.bottleneck.title, 'double NAT or split networks');
+  assert.ok(/bridge\/passthrough/.test(splitOnly.cheapest_fix.action));
+  assert.ok(/plug the Mini into the eero/.test(splitOnly.cheapest_fix.action));
+  assert.strictEqual(buildReport({
+    discover: {
+      ok: true,
+      host: { interfaces: [
+        { device: 'en0', address: '192.168.1.10', netmask: '255.255.255.0' },
+        { device: 'en1', address: '192.168.1.20', netmask: '255.255.255.0' }
+      ] }
+    },
+    router_detect: {
+      ok: true,
+      gateways: [
+        { ip: '192.168.1.1', interface: 'en0', vendor: 'isp-openwrt', label: 'ISP gateway (OpenWrt-based firmware)' },
+        { ip: '192.168.1.1', interface: 'en1', vendor: 'eero', label: 'eero' }
+      ]
+    },
+    speed_test: speed([{ kind: 'ethernet', status: 'tested', down_mbps: 100, up_mbps: 10, responsiveness_band: 'high', responsiveness_rpm: 2000 }])
+  }).rule_id, 'healthy');
   const roam = buildReport({
     plan_down_mbps: 300,
     speed_test: speed([{ kind: 'wifi', status: 'tested', down_mbps: 280, up_mbps: 40, responsiveness_band: 'high', responsiveness_rpm: 2200 }]),
@@ -423,6 +519,22 @@ check('server modules stay under 300 lines and hold no credentials', () => {
 
 async function main() {
   await checkAsync('speed_test skips a down interface and will not ping a public gateway', async () => {
+    const previousSkip = process.env.HNC_SKIP_NETWORK;
+    process.env.HNC_SKIP_NETWORK = '1';
+    try {
+      let ran = false;
+      const skippedNet = await speedTest({ interface: 'all' }, {
+        platform: 'darwin',
+        runCommand: async () => { ran = true; throw new Error('ran'); },
+        loadHost: async () => { ran = true; throw new Error('ran'); }
+      });
+      assert.strictEqual(skippedNet.skipped_network, true);
+      assert.deepStrictEqual(skippedNet.interfaces, []);
+      assert.strictEqual(ran, false);
+    } finally {
+      if (previousSkip == null) delete process.env.HNC_SKIP_NETWORK;
+      else process.env.HNC_SKIP_NETWORK = previousSkip;
+    }
     const calls = [];
     const runCommand = async (file, args) => {
       calls.push(`${file} ${args.join(' ')}`);
@@ -458,6 +570,137 @@ async function main() {
       runCommand: () => { throw new Error('spawned'); }
     });
     assert.strictEqual(linux.error, 'unsupported OS');
+  });
+
+  await checkAsync('speed_test all includes Wi-Fi and pings each interface gateway', async () => {
+    const calls = [];
+    const ports = [
+      'Hardware Port: Ethernet',
+      'Device: en0',
+      'Ethernet Address: aa:bb:cc:dd:ee:01',
+      '',
+      'Hardware Port: USB 10/100/1000 LAN',
+      'Device: en5',
+      'Ethernet Address: 11:22:33:44:55:01',
+      '',
+      'Hardware Port: USB 10/100/1000 LAN',
+      'Device: en6',
+      'Ethernet Address: 11:22:33:44:55:02',
+      '',
+      'Hardware Port: USB 10/100/1000 LAN',
+      'Device: en7',
+      'Ethernet Address: 11:22:33:44:55:03',
+      '',
+      'Hardware Port: USB 10/100/1000 LAN',
+      'Device: en8',
+      'Ethernet Address: 11:22:33:44:55:04',
+      '',
+      'Hardware Port: Wi-Fi',
+      'Device: en1',
+      'Ethernet Address: 68:4a:76:10:00:01'
+    ].join('\n');
+    const ifconfigText = [
+      'en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.90.50 netmask 0xffffff00 broadcast 192.168.90.255',
+      '\tstatus: active',
+      'en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.4.20 netmask 0xffffff00 broadcast 192.168.4.255',
+      '\tstatus: active',
+      'en5: flags=8822<UP,BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500',
+      '\tstatus: inactive',
+      'en6: flags=8822<UP,BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500',
+      '\tstatus: inactive',
+      'en7: flags=8822<UP,BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500',
+      '\tstatus: inactive',
+      'en8: flags=8822<UP,BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500',
+      '\tstatus: inactive'
+    ].join('\n');
+    const result = await speedTest({ interface: 'all' }, {
+      platform: 'darwin',
+      loadHost: async () => ({
+        interfaces: [
+          { device: 'en0', address: '192.168.90.50', netmask: '255.255.255.0' },
+          { device: 'en1', address: '192.168.4.20', netmask: '255.255.255.0' }
+        ],
+        route: { gateway: '192.168.90.1', interface: 'en0', raw_gateway: '192.168.90.1' }
+      }),
+      runCommand: async (file, args) => {
+        calls.push(`${file} ${args.join(' ')}`);
+        if (file === 'networksetup') return { stdout: ports, ok: true, spawnError: false };
+        if (file === 'ifconfig') return { stdout: ifconfigText, ok: true, spawnError: false };
+        if (file === 'ping') return { stdout: PING, ok: true, spawnError: false };
+        if (file === 'networkQuality') {
+          const device = args[args.indexOf('-I') + 1];
+          const rpm = device === 'en1' ? 126 : 840;
+          return {
+            stdout: JSON.stringify({
+              base_rtt: 8,
+              dl_throughput: device === 'en1' ? 400000000 : 900000000,
+              ul_throughput: 40000000,
+              responsiveness: rpm,
+              interface_name: device
+            }),
+            ok: true,
+            spawnError: false
+          };
+        }
+        throw new Error(`unexpected ${file}`);
+      }
+    });
+    const devices = result.interfaces.map((item) => item.device);
+    assert.ok(devices.includes('en1'), devices.join(','));
+    assert.ok(devices.includes('en0'), devices.join(','));
+    assert.ok(devices.indexOf('en1') < devices.indexOf('en5'));
+    const wifi = result.interfaces.find((item) => item.device === 'en1');
+    const ethernet = result.interfaces.find((item) => item.device === 'en0');
+    const down = result.interfaces.find((item) => item.device === 'en5');
+    assert.strictEqual(wifi.status, 'tested');
+    assert.strictEqual(wifi.ping_gateway.host, '192.168.4.1');
+    assert.strictEqual(wifi.ping_gateway.skipped, false);
+    assert.strictEqual(wifi.responsiveness_rpm, 126);
+    assert.strictEqual(ethernet.ping_gateway.host, '192.168.90.1');
+    assert.strictEqual(ethernet.responsiveness_rpm, 840);
+    assert.strictEqual(down.status, 'skipped');
+    assert.strictEqual(down.ping_gateway.skipped, true);
+    assert.strictEqual(down.ping_gateway.loss_pct, undefined);
+    const pings = calls.filter((call) => call.startsWith('ping ')).map((call) => call.split(' ').pop());
+    assert.deepStrictEqual(pings, ['192.168.4.1', '192.168.90.1']);
+    const measured = calls.filter((call) => call.startsWith('networkQuality ')).map((call) => call.split(' ')[2]);
+    assert.deepStrictEqual(measured, ['en1', 'en0']);
+  });
+
+  await checkAsync('loadHost keeps each interface gateway and drops tunnels', async () => {
+    const { loadHost } = require('../server/tools/host');
+    const ifconfigText = [
+      'en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.90.50 netmask 0xffffff00 broadcast 192.168.90.255',
+      '\tstatus: active',
+      'en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.4.20 netmask 0xffffff00 broadcast 192.168.4.255',
+      '\tstatus: active',
+      'utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380',
+      '\tinet 10.0.0.2 --> 10.0.0.1 netmask 0xff000000'
+    ].join('\n');
+    const host = await loadHost({
+      runCommand: async (file, args) => {
+        if (file === 'route' && !(args || []).includes('-ifscope')) {
+          return { stdout: 'gateway: 192.168.90.1\ninterface: en0\n', ok: true, spawnError: false };
+        }
+        if (file === 'route') return { stdout: 'gateway: 192.168.90.1\ninterface: en0\n', ok: true, spawnError: false };
+        if (file === 'ifconfig') return { stdout: ifconfigText, ok: true, spawnError: false };
+        if (file === 'ipconfig' && (args || []).includes('en0')) return { stdout: '192.168.90.1\n', ok: true, spawnError: false };
+        if (file === 'ipconfig') return { stdout: '\n', ok: true, spawnError: false };
+        throw new Error(`unexpected ${file}`);
+      }
+    });
+    assert.deepStrictEqual(host.interfaces.map((item) => item.device), ['en0', 'en1']);
+    const ethernet = host.interfaces.find((item) => item.device === 'en0');
+    const wifi = host.interfaces.find((item) => item.device === 'en1');
+    assert.strictEqual(ethernet.gateway, '192.168.90.1');
+    assert.strictEqual(ethernet.gateway_source, 'dhcp');
+    assert.strictEqual(wifi.gateway, '192.168.4.1');
+    assert.strictEqual(wifi.gateway_source, 'subnet-gateway');
+    assert.notStrictEqual(wifi.gateway, '192.168.90.1');
   });
 
   await checkAsync('discover fetches only in-subnet UPnP descriptions', async () => {
@@ -554,10 +797,10 @@ async function main() {
         return { ok: true, status: 200, headers: {}, body: UPNP };
       }
     });
-    assert.deepStrictEqual(result.host.interfaces.map((item) => item.device), ['en0']);
-    assert.deepStrictEqual(fetched, ['http://192.168.1.1/rootDesc.xml']);
+    assert.deepStrictEqual(result.host.interfaces.map((item) => item.device), ['en0', 'en5']);
+    assert.deepStrictEqual(fetched, ['http://192.168.50.2/rootDesc.xml', 'http://192.168.1.1/rootDesc.xml']);
     assert.ok(result.skipped_probes.some((item) => item.target.includes('10.1.2.3')));
-    assert.ok(result.skipped_probes.some((item) => item.target.includes('192.168.50.2')));
+    assert.ok(!result.skipped_probes.some((item) => item.target.includes('192.168.50.2')));
 
     const many = [];
     const capped = await discover({}, {
@@ -617,10 +860,15 @@ async function main() {
       },
       httpGet: async (location) => {
         fetched.push(location);
+        const pathName = new URL(location).pathname;
+        if (!FINGERPRINT_PATHS.includes(pathName)) {
+          return { ok: false, status: 404, headers: { server: 'ubnt' }, body: 'missing' };
+        }
         return { ok: true, status: 200, headers: { server: 'ubnt' }, body: '<title>UniFi OS</title><p>UniFi</p>' };
       }
     });
-    assert.deepStrictEqual(fetched, FINGERPRINT_PATHS.map((item) => `http://192.168.1.1${item}`));
+    assert.ok(fetched[0].includes('/hnc-probe-'));
+    assert.deepStrictEqual(fetched.slice(1), FINGERPRINT_PATHS.map((item) => `http://192.168.1.1${item}`));
     assert.strictEqual(found.vendor, 'unifi');
     assert.strictEqual(found.read_adapter, 'unifi');
     const refused = [];
@@ -638,6 +886,60 @@ async function main() {
       ssdpSearch: async () => { throw new Error('searched'); }
     });
     assert.strictEqual(linux.error, 'unsupported OS');
+  });
+
+  await checkAsync('router_detect treats a catch-all ISP gateway as weak and an eero by OUI', async () => {
+    const fetched = [];
+    const body = '<html><title></title>OK</html>';
+    const found = await routerDetect({}, {
+      platform: 'darwin',
+      loadHost: async () => ({
+        interfaces: [
+          { device: 'en0', address: '192.168.90.50', netmask: '255.255.255.0', gateway: '192.168.90.1' },
+          { device: 'en1', address: '192.168.4.20', netmask: '255.255.255.0', gateway: '192.168.4.1' }
+        ],
+        route: { gateway: '192.168.90.1', interface: 'en0', raw_gateway: '192.168.90.1' }
+      }),
+      discoverResult: {
+        ok: true,
+        gateway: { ip: '192.168.90.1', mac: 'c0:ff:ee:00:00:01', interface: 'en0' },
+        gateways: [
+          { ip: '192.168.90.1', interface: 'en0', mac: 'c0:ff:ee:00:00:01' },
+          { ip: '192.168.4.1', interface: 'en1', mac: '68:4a:76:11:22:33' }
+        ],
+        mdns: { service_types: [] },
+        ssdp: [{ server: 'EXOS/OpenWrt MiniUPnPd', location: 'http://192.168.90.1/rootDesc.xml', address: '192.168.90.1', st: 'upnp:rootdevice' }],
+        upnp: [],
+        arp: [
+          { ip: '192.168.90.1', mac: 'c0:ff:ee:00:00:01' },
+          { ip: '192.168.4.1', mac: '68:4a:76:11:22:33' }
+        ]
+      },
+      httpGet: async (location) => {
+        fetched.push(location);
+        const url = new URL(location);
+        if (url.hostname === '192.168.90.1') {
+          return { ok: true, status: 200, headers: { server: 'micro_httpd' }, body };
+        }
+        return { ok: false, status: 404, headers: {}, body: '' };
+      }
+    });
+    const ispFetches = fetched.filter((item) => item.includes('192.168.90.1'));
+    assert.ok(ispFetches[0].includes('/hnc-probe-'));
+    assert.deepStrictEqual(ispFetches.slice(1), FINGERPRINT_PATHS.map((item) => `http://192.168.90.1${item}`));
+    assert.strictEqual(found.vendor, 'isp-openwrt');
+    assert.strictEqual(found.label, 'ISP gateway (OpenWrt-based firmware)');
+    assert.strictEqual(found.confidence, 'low');
+    assert.strictEqual(found.catch_all, true);
+    assert.ok(found.evidence.some((item) => /miniupnpd/i.test(item.detail)));
+    assert.ok(!found.evidence.some((item) => item.source === 'http'));
+    const eeroGw = found.gateways.find((item) => item.ip === '192.168.4.1');
+    assert.strictEqual(eeroGw.vendor, 'eero');
+    assert.strictEqual(eeroGw.local_api, 'none (app/cloud only)');
+    assert.strictEqual(eeroGw.interface, 'en1');
+    const ispGw = found.gateways.find((item) => item.ip === '192.168.90.1');
+    assert.strictEqual(ispGw.vendor, 'isp-openwrt');
+    assert.strictEqual(ispGw.confidence, 'low');
   });
 
   await checkAsync('wifi_sample and report do not touch the network when injected or unsupported', async () => {
@@ -690,7 +992,10 @@ async function main() {
       params: { name: 'wifi_sample', arguments: { samples: 0 } }
     });
     assert.strictEqual(bad.error.code, -32602);
-    const child = spawn(process.execPath, [path.join(root, 'server/hnc-mcp.js')], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(root, 'server/hnc-mcp.js')], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, { HNC_SKIP_NETWORK: '1' })
+    });
     let buffer = '';
     const messages = [];
     child.stdout.on('data', (chunk) => {
@@ -732,11 +1037,19 @@ async function main() {
       assert.ok(tool.outputSchema, tool.name);
       assert.strictEqual(tool.annotations.readOnlyHint, true);
     }
-    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'speed_test', arguments: {} } });
-    const called = await waitFor(3);
-    assert.strictEqual(called.result.isError, false);
-    assert.strictEqual(called.result.structuredContent.error, 'unsupported OS');
-    child.kill('SIGTERM');
+    try {
+      send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'speed_test', arguments: {} } });
+      const called = await waitFor(3);
+      assert.strictEqual(called.result.isError, false);
+      if (process.platform === 'darwin') {
+        assert.strictEqual(called.result.structuredContent.skipped_network, true);
+        assert.ok(!called.result.structuredContent.error);
+      } else {
+        assert.strictEqual(called.result.structuredContent.error, 'unsupported OS');
+      }
+    } finally {
+      child.kill('SIGTERM');
+    }
   });
 
   console.log('---');

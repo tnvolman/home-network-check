@@ -36,7 +36,7 @@ const interfaceChoice = { type: 'string', enum: ['wifi', 'ethernet', 'all'] };
 
 const speedTest = {
   name: 'speed_test',
-  description: 'Read-only macOS speed and latency check on this computer. Runs networkQuality -I <iface> -c, maps Wi-Fi and Ethernet with networksetup, skips a down interface, and pings the gateway only when that gateway is inside the local subnet. Compares throughput with optional plan speeds. Sends speed-test traffic off the LAN. Does not change settings.',
+  description: 'Read-only macOS speed and latency check on this computer. Runs networkQuality -I <iface> -c, maps Wi-Fi and Ethernet with networksetup, and skips a down interface without pinging it. interface all includes Wi-Fi and Ethernet. Each up interface is pinged at its own gateway only when that address is inside that interface\'s subnet. Compares throughput with optional plan speeds. Sends speed-test traffic off the LAN. Does not change settings.',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object',
@@ -54,7 +54,7 @@ const speedTest = {
 
 const discover = {
   name: 'discover',
-  description: 'Read-only inventory of this Mac\'s own subnet. Reads the default route, interface prefixes, and ARP table, browses mDNS service types with dns-sd for a few seconds, and sends one SSDP M-SEARCH. Fetches UPnP description XML only from literal addresses that pass isInLocalSubnet. Does not sweep the subnet, does not log in, and does not change settings.',
+  description: 'Read-only inventory of this Mac\'s active subnets. Reads the default route, each active non-tunnel interface prefix and its own gateway, and the ARP table, browses mDNS service types with dns-sd for a few seconds, and sends one SSDP M-SEARCH. Fetches UPnP description XML only from literal addresses that pass isInLocalSubnet on one of those prefixes. Tunnel interfaces are dropped. Does not sweep a subnet, does not log in, and does not change settings.',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { type: 'object', properties: {} },
   outputSchema: toolOutput({
@@ -92,7 +92,7 @@ const wifiSample = {
 
 const routerDetect = {
   name: 'router_detect',
-  description: 'Detect-only identification of the gateway vendor on this subnet: eero, Google/Nest Wifi, NETGEAR Orbi, TP-Link Deco, ASUS/Merlin, UniFi, or OpenWrt. Uses discovery evidence and safe GETs of the gateway\'s own web root and a short allowlist of known paths. No login, no credentials, no writes. local_api is documented, unofficial, or none (app/cloud only). v0.2 read adapters for UniFi, OpenWrt, and ASUS plug into the same adapter interface and are not called.',
+  description: 'Detect-only identification of each active interface\'s gateway: eero, Google/Nest Wifi, NETGEAR Orbi, TP-Link Deco, ASUS/Merlin, UniFi, OpenWrt, or an ISP gateway that only echoes OpenWrt inside MiniUPnPd. Probes a random path first and treats a catch-all HTTP 200 as no evidence. Uses discovery evidence and safe GETs of a short allowlist. No login, no credentials, no writes. local_api is documented, unofficial, none (app/cloud only), or null. v0.2 read adapters for UniFi, OpenWrt, and ASUS plug into the same adapter interface and are not called.',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { type: 'object', properties: {} },
   outputSchema: toolOutput({

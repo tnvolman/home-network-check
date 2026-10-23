@@ -7,18 +7,19 @@ function isTunnelDevice(device) {
   return /^(utun|ipsec|ppp|tun|wg)/i.test(String(device || ''));
 }
 
-// Probes use only the non-tunnel interface that holds the default route.
+// Active non-tunnel interfaces. Each prefix is its own probe guard.
+// A tunnel default route probes nothing: that prefix is not a home LAN.
 function probeInterfaces(interfaces, routeInterface) {
   if (!routeInterface || isTunnelDevice(routeInterface)) return [];
   return (interfaces || []).filter((iface) => {
-    if (!iface || iface.device !== routeInterface) return false;
-    if (isTunnelDevice(iface.device)) return false;
+    if (!iface || isTunnelDevice(iface.device)) return false;
     if (iface.up === false) return false;
     return Boolean(iface.address && iface.netmask);
   }).map((iface) => ({
     device: iface.device,
     address: iface.address,
-    netmask: iface.netmask
+    netmask: iface.netmask,
+    gateway: iface.gateway || null
   }));
 }
 

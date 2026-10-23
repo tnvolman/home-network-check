@@ -34,6 +34,7 @@ function signalsFrom(input) {
     const oui = lookupOui(input.gateway_mac);
     if (oui.vendor) push('oui', oui.vendor, { vendor: oui.vendor });
   }
+  if (input.gateway_ip) push('gateway', input.gateway_ip);
   for (const name of input.hostnames || []) push('hostname', name);
   return signals;
 }
