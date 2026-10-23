@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "home-network-check": {
+      "command": "node",
+      "args": ["server/hnc-mcp.js"]
+    }
+  }
+}

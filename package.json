@@ -1,0 +1,14 @@
+{
+  "name": "home-network-check",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local read-only home network check. No npm dependencies.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {},
+  "scripts": {
+    "start": "node server/hnc-mcp.js",
+    "prove": "node scripts/prove.js"
+  }
+}
