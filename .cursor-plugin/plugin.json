@@ -1,0 +1,12 @@
+{
+  "name": "home-network-check",
+  "displayName": "Home Network Check",
+  "version": "0.1.0",
+  "description": "Read-only check of the home network this Mac is connected to. Local stdio MCP, no telemetry, no router login.",
+  "author": {
+    "name": "tnvolman"
+  },
+  "license": "MIT",
+  "keywords": ["network", "wifi", "home", "bufferbloat", "mcp", "macos"],
+  "skills": "./skills"
+}
