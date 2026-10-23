@@ -95,6 +95,11 @@ function detectVendor(input) {
       path: null
     });
   }
+  // 192.168.4.1 is a common LAN address. It names eero only at low confidence
+  // until an OUI or another source agrees.
+  if (best.adapter.id === 'eero' && best.hit.sources.length === 1 && best.hit.sources[0] === 'gateway') {
+    confidence = 'low';
+  }
   return {
     vendor: best.adapter.id,
     label: best.adapter.label,

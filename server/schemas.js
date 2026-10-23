@@ -54,7 +54,7 @@ const speedTest = {
 
 const discover = {
   name: 'discover',
-  description: 'Read-only inventory of this Mac\'s active subnets. Reads the default route, each active non-tunnel interface prefix and its own gateway, and the ARP table, browses mDNS service types with dns-sd for a few seconds, and sends one SSDP M-SEARCH. Fetches UPnP description XML only from literal addresses that pass isInLocalSubnet on one of those prefixes. Tunnel interfaces are dropped. Does not sweep a subnet, does not log in, and does not change settings.',
+  description: 'Read-only inventory of this Mac\'s active subnets. Reads the default route, each active Wi-Fi and Ethernet prefix from networksetup (or en* when that list is unavailable) and its own gateway, and the ARP table, browses mDNS service types with dns-sd for a few seconds, and sends one SSDP M-SEARCH. Fetches UPnP description XML only from literal addresses that pass isInLocalSubnet on one of those prefixes. Virtual interfaces such as feth, tap, and utun are not probe targets. Does not sweep a subnet, does not log in, and does not change settings.',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { type: 'object', properties: {} },
   outputSchema: toolOutput({

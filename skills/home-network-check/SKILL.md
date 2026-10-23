@@ -9,7 +9,7 @@ Run this on the user's own Mac. The MCP server is `home-network-check`. If a too
 
 ## Order
 
-1. `discover` — each active interface's gateway and subnet, ARP, mDNS service types, SSDP, in-subnet UPnP. A tunnel is not a subnet.
+1. `discover` — each Wi-Fi and Ethernet hardware port's gateway and subnet, ARP, mDNS service types, SSDP, in-subnet UPnP. Virtual interfaces (ZeroTier, OpenVPN, utun) are not subnets.
 2. `wifi_sample` — default 6 samples, 10 seconds apart. A redacted BSSID means roaming is unknown.
 3. `speed_test` — pass `plan_down_mbps` and `plan_up_mbps` when the user knows them. `all` includes Wi-Fi. Skip a down interface and do not ping it. This is the only tool that sends traffic off the LAN.
 4. `router_detect` — vendor guess only. Do not ask for a password.

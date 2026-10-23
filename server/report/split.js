@@ -1,12 +1,12 @@
 'use strict';
 
-const { isTunnelDevice, isProbeable } = require('../subnet');
+const { deviceAllowed, isProbeable } = require('../subnet');
 
 const MESH_VENDORS = ['eero', 'google-nest-wifi', 'netgear-orbi', 'tp-link-deco'];
 
 function subnetDevice(ip, interfaces) {
   for (const iface of interfaces || []) {
-    if (!iface || isTunnelDevice(iface.device)) continue;
+    if (!iface || !deviceAllowed(iface.device)) continue;
     if (isProbeable(ip, [iface])) return iface.device || null;
   }
   return null;
