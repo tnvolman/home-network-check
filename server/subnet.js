@@ -2,6 +2,26 @@
 
 const { MIN_PREFIX, MAX_PREFIX } = require('./constants');
 
+// macOS VPN and tunnel devices. A 10/8 on utun0 must not become a probe target.
+function isTunnelDevice(device) {
+  return /^(utun|ipsec|ppp|tun|wg)/i.test(String(device || ''));
+}
+
+// Probes use only the non-tunnel interface that holds the default route.
+function probeInterfaces(interfaces, routeInterface) {
+  if (!routeInterface || isTunnelDevice(routeInterface)) return [];
+  return (interfaces || []).filter((iface) => {
+    if (!iface || iface.device !== routeInterface) return false;
+    if (isTunnelDevice(iface.device)) return false;
+    if (iface.up === false) return false;
+    return Boolean(iface.address && iface.netmask);
+  }).map((iface) => ({
+    device: iface.device,
+    address: iface.address,
+    netmask: iface.netmask
+  }));
+}
+
 function isIpv4(ip) {
   if (typeof ip !== 'string') return false;
   const parts = ip.split('.');
@@ -77,7 +97,7 @@ function isInLocalSubnet(ip, interfaces) {
   const ipn = ipv4ToInt(ip);
   const targetLinkLocal = masked(ipn, 0xffff0000) === 0xa9fe0000;
   for (const iface of interfaces) {
-    if (!iface || !isRfc1918OrLinkLocal(iface.address)) continue;
+    if (!iface || isTunnelDevice(iface.device) || !isRfc1918OrLinkLocal(iface.address)) continue;
     const prefix = prefixLength(iface.netmask);
     if (prefix < MIN_PREFIX || prefix > MAX_PREFIX) continue;
     const an = ipv4ToInt(iface.address);
@@ -142,6 +162,8 @@ module.exports = {
   isIpv4,
   ipv4ToInt,
   isRfc1918OrLinkLocal,
+  isTunnelDevice,
+  probeInterfaces,
   prefixLength,
   isInLocalSubnet,
   isProbeable,

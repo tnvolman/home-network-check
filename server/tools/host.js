@@ -3,7 +3,7 @@
 const { runCommand } = require('../proc');
 const { parseIfconfig, hostSubnets } = require('../parsers/ifconfig');
 const { parseDefaultRoute } = require('../parsers/route');
-const { isIpv4 } = require('../subnet');
+const { isIpv4, probeInterfaces } = require('../subnet');
 
 async function loadHost(deps = {}) {
   const run = deps.runCommand || runCommand;
@@ -12,9 +12,8 @@ async function loadHost(deps = {}) {
     run('ifconfig', ['-a'], { timeoutMs: 4000 })
   ]);
   const route = parseDefaultRoute(routeResult.stdout || '');
-  const interfaces = hostSubnets(parseIfconfig(ifconfigResult.stdout || ''))
-    .filter((row) => row.up)
-    .map((row) => ({ device: row.device, address: row.address, netmask: row.netmask }));
+  const up = hostSubnets(parseIfconfig(ifconfigResult.stdout || '')).filter((row) => row.up);
+  const interfaces = probeInterfaces(up, route.interface);
   const gateway = isIpv4(route.gateway) ? route.gateway : null;
   return {
     interfaces,

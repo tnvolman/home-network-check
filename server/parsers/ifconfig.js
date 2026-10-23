@@ -23,7 +23,7 @@ function parseIfconfig(text) {
       continue;
     }
     if (!current) continue;
-    const inet = /^\s+inet (\d+\.\d+\.\d+\.\d+) netmask (0x[0-9a-fA-F]+)/.exec(line);
+    const inet = /^\s+inet (\d+\.\d+\.\d+\.\d+)(?:\s+-->\s+\d+\.\d+\.\d+\.\d+)? netmask (0x[0-9a-fA-F]+)/.exec(line);
     if (inet) {
       current.addresses.push({
         address: inet[1],

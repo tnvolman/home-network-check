@@ -12,6 +12,9 @@ const { ssdpSearch } = require('../net/ssdp-search');
 const { safeGet } = require('../net/safe-get');
 const { loadHost } = require('./host');
 
+const MAX_LOCATION_FETCHES = 16;
+const DISCOVER_BUDGET_MS = 12000;
+
 function bannerVendor(text) {
   const value = String(text || '').toLowerCase();
   if (/\beero\b/.test(value)) return 'eero';
@@ -90,16 +93,22 @@ async function discover(_args = {}, deps = {}) {
   const run = deps.runCommand || runCommand;
   const search = deps.ssdpSearch || ssdpSearch;
   const httpGet = deps.httpGet || safeGet;
+  const budgetMs = Number.isFinite(deps.budgetMs) ? deps.budgetMs : DISCOVER_BUDGET_MS;
+  const clock = typeof deps.now === 'function' ? deps.now : Date.now;
+  const started = clock();
+  const remaining = () => budgetMs - (clock() - started);
   const host = deps.loadHost ? await deps.loadHost(deps) : await loadHost({ runCommand: run });
   const interfaces = host.interfaces;
 
+  const within = Math.max(0, remaining());
   const [arpResult, mdnsResult] = await Promise.all([
-    run('arp', ['-an'], { timeoutMs: 4000 }),
-    run('dns-sd', ['-B', '_services._dns-sd._udp'], { timeoutMs: 3000 })
+    run('arp', ['-an'], { timeoutMs: Math.min(4000, within) }),
+    run('dns-sd', ['-B', '_services._dns-sd._udp'], { timeoutMs: Math.min(3000, within) })
   ]);
   const arp = parseArp(arpResult.stdout || '');
   const mdnsTypes = parseMdnsServiceTypes(mdnsResult.stdout || '');
-  const ssdp = await search({ timeoutMs: 2500 });
+  const ssdpLeft = remaining();
+  const ssdp = ssdpLeft > 0 ? await search({ timeoutMs: Math.min(2500, ssdpLeft) }) : [];
 
   const probes = [{
     target: '239.255.255.250:1900',
@@ -110,17 +119,30 @@ async function discover(_args = {}, deps = {}) {
   const skipped = [];
   const upnp = [];
   const seen = new Set();
+  let fetches = 0;
   for (const reply of ssdp || []) {
     if (!reply.location || seen.has(reply.location)) continue;
     seen.add(reply.location);
+    if (remaining() <= 0) {
+      skipped.push({ target: reply.location, reason: 'discover time budget exhausted' });
+      probes.push({ target: reply.location, kind: 'upnp-description', allowed: false, reason: 'discover time budget exhausted' });
+      continue;
+    }
     const target = evaluateTarget(reply.location, interfaces);
     if (!target.ok) {
       skipped.push({ target: reply.location, reason: target.reason });
       probes.push({ target: reply.location, kind: 'upnp-description', allowed: false, reason: target.reason });
       continue;
     }
-    probes.push({ target: `${target.ip}:${target.port}`, kind: 'upnp-description', allowed: true });
-    const response = await httpGet(reply.location, interfaces);
+    if (fetches >= MAX_LOCATION_FETCHES) {
+      skipped.push({ target: reply.location, reason: 'location fetch cap' });
+      probes.push({ target: reply.location, kind: 'upnp-description', allowed: false, reason: 'location fetch cap' });
+      continue;
+    }
+    fetches += 1;
+    const response = await httpGet(reply.location, interfaces, {
+      timeoutMs: Math.min(2500, Math.max(1, remaining()))
+    });
     if (response && response.refused) {
       skipped.push({ target: reply.location, reason: response.reason || 'refused' });
       continue;
@@ -172,4 +194,10 @@ async function discover(_args = {}, deps = {}) {
   };
 }
 
-module.exports = { discover, mergeDevices, bannerVendor };
+module.exports = {
+  discover,
+  mergeDevices,
+  bannerVendor,
+  MAX_LOCATION_FETCHES,
+  DISCOVER_BUDGET_MS
+};

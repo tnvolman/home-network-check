@@ -23,7 +23,7 @@ const { detectVendor } = require('../server/vendors/detect');
 const { adapters, READ_ADAPTER_IDS } = require('../server/vendors/adapters');
 const { buildReport, RULES } = require('../server/report/rules');
 const { speedTest } = require('../server/tools/speed-test');
-const { discover } = require('../server/tools/discover');
+const { discover, MAX_LOCATION_FETCHES, DISCOVER_BUDGET_MS } = require('../server/tools/discover');
 const { wifiSample } = require('../server/tools/wifi-sample');
 const { routerDetect, FINGERPRINT_PATHS } = require('../server/tools/router-detect');
 const { report } = require('../server/tools/report');
@@ -183,6 +183,33 @@ check('probe urls stay on literal in-subnet addresses', () => {
   ]) {
     assert.strictEqual(subnet.evaluateTarget(bad, LAN).ok, false, bad);
   }
+});
+
+check('vpn tunnels and non-default interfaces are not local', () => {
+  const raw = [
+    { device: 'en0', address: '192.168.1.42', netmask: '255.255.255.0', up: true },
+    { device: 'en5', address: '192.168.50.20', netmask: '255.255.255.0', up: true },
+    { device: 'utun3', address: '10.0.0.2', netmask: '255.0.0.0', up: true },
+    { device: 'ipsec0', address: '10.8.0.2', netmask: '255.255.255.0', up: true },
+    { device: 'ppp0', address: '10.9.0.2', netmask: '255.255.255.0', up: true },
+    { device: 'tun0', address: '10.10.0.2', netmask: '255.255.255.0', up: true },
+    { device: 'wg0', address: '10.11.0.2', netmask: '255.255.255.0', up: true }
+  ];
+  for (const row of raw.slice(2)) assert.strictEqual(subnet.isTunnelDevice(row.device), true, row.device);
+  assert.strictEqual(subnet.isTunnelDevice('en0'), false);
+  const probes = subnet.probeInterfaces(raw, 'en0');
+  assert.deepStrictEqual(probes.map((item) => item.device), ['en0']);
+  assert.strictEqual(subnet.isInLocalSubnet('192.168.1.1', probes), true);
+  assert.strictEqual(subnet.isInLocalSubnet('10.1.2.3', probes), false);
+  assert.strictEqual(subnet.isInLocalSubnet('10.8.0.9', probes), false);
+  assert.strictEqual(subnet.isInLocalSubnet('192.168.50.2', probes), false);
+  assert.deepStrictEqual(subnet.probeInterfaces(raw, 'utun3'), []);
+  assert.strictEqual(subnet.isInLocalSubnet('10.1.2.3', subnet.probeInterfaces(raw, 'utun3')), false);
+  assert.strictEqual(subnet.isProbeable('10.1.2.3', raw), false);
+  assert.strictEqual(subnet.isProbeable('10.9.0.9', raw), false);
+  assert.strictEqual(subnet.isProbeable('10.10.0.9', raw), false);
+  assert.strictEqual(subnet.isProbeable('10.11.0.9', raw), false);
+  assert.strictEqual(subnet.evaluateTarget('http://10.1.2.3/rootDesc.xml', probes).ok, false);
 });
 
 check('parsers read fixture output', () => {
@@ -487,6 +514,93 @@ async function main() {
     });
     assert.strictEqual(blocked.error, 'unsupported OS');
     assert.strictEqual(ssdpCalled, false);
+  });
+
+  await checkAsync('discover ignores a VPN 10/8 and caps location fetches', async () => {
+    assert.strictEqual(MAX_LOCATION_FETCHES, 16);
+    assert.ok(DISCOVER_BUDGET_MS > 0);
+    const ifconfigText = [
+      'en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.1.42 netmask 0xffffff00 broadcast 192.168.1.255',
+      '\tstatus: active',
+      'en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500',
+      '\tinet 192.168.50.20 netmask 0xffffff00 broadcast 192.168.50.255',
+      '\tstatus: active',
+      'utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380',
+      '\tinet 10.0.0.2 --> 10.0.0.1 netmask 0xff000000'
+    ].join('\n');
+    const parsedUtun = ifconfig.parseIfconfig(ifconfigText).find((item) => item.device === 'utun3');
+    assert.strictEqual(parsedUtun.addresses[0].address, '10.0.0.2');
+    assert.strictEqual(parsedUtun.addresses[0].netmask, '255.0.0.0');
+    const fetched = [];
+    const result = await discover({}, {
+      platform: 'darwin',
+      runCommand: async (file) => {
+        if (file === 'route') {
+          return { stdout: 'gateway: 192.168.1.1\ninterface: en0\n', ok: true, spawnError: false };
+        }
+        if (file === 'ifconfig') return { stdout: ifconfigText, ok: true, spawnError: false };
+        if (file === 'arp') return { stdout: '', ok: true, spawnError: false };
+        if (file === 'dns-sd') return { stdout: '', ok: false, spawnError: false, timedOut: true };
+        throw new Error(`unexpected ${file}`);
+      },
+      ssdpSearch: async () => ([
+        { server: 'vpn', location: 'http://10.1.2.3/rootDesc.xml', st: 'ssdp:all', usn: 'vpn', address: '10.1.2.3' },
+        { server: 'other', location: 'http://192.168.50.2/rootDesc.xml', st: 'ssdp:all', usn: 'other', address: '192.168.50.2' },
+        { server: 'gw', location: 'http://192.168.1.1/rootDesc.xml', st: 'ssdp:all', usn: 'gw', address: '192.168.1.1' }
+      ]),
+      httpGet: async (location) => {
+        fetched.push(location);
+        return { ok: true, status: 200, headers: {}, body: UPNP };
+      }
+    });
+    assert.deepStrictEqual(result.host.interfaces.map((item) => item.device), ['en0']);
+    assert.deepStrictEqual(fetched, ['http://192.168.1.1/rootDesc.xml']);
+    assert.ok(result.skipped_probes.some((item) => item.target.includes('10.1.2.3')));
+    assert.ok(result.skipped_probes.some((item) => item.target.includes('192.168.50.2')));
+
+    const many = [];
+    const capped = await discover({}, {
+      platform: 'darwin',
+      loadHost: async () => lanHost(),
+      runCommand: async (file) => {
+        if (file === 'arp' || file === 'dns-sd') return { stdout: '', ok: true, spawnError: false, timedOut: false };
+        throw new Error(`unexpected ${file}`);
+      },
+      ssdpSearch: async () => Array.from({ length: 20 }, (_, index) => ({
+        server: 'dev',
+        location: `http://192.168.1.1:${8000 + index}/desc.xml`,
+        st: 'ssdp:all',
+        usn: `u${index}`,
+        address: '192.168.1.1'
+      })),
+      httpGet: async (location) => {
+        many.push(location);
+        return { ok: true, status: 200, headers: {}, body: UPNP };
+      }
+    });
+    assert.strictEqual(many.length, 16);
+    assert.ok(capped.skipped_probes.filter((item) => item.reason === 'location fetch cap').length >= 4);
+
+    let clock = 0;
+    const timed = [];
+    await discover({}, {
+      platform: 'darwin',
+      loadHost: async () => lanHost(),
+      now: () => clock,
+      runCommand: async () => ({ stdout: '', ok: true, spawnError: false, timedOut: false }),
+      ssdpSearch: async () => ([
+        { server: 'a', location: 'http://192.168.1.1/a.xml', st: 'ssdp:all', usn: 'a', address: '192.168.1.1' },
+        { server: 'b', location: 'http://192.168.1.1/b.xml', st: 'ssdp:all', usn: 'b', address: '192.168.1.1' },
+        { server: 'c', location: 'http://192.168.1.1/c.xml', st: 'ssdp:all', usn: 'c', address: '192.168.1.1' }
+      ]),
+      httpGet: async (location) => {
+        timed.push(location);
+        clock = DISCOVER_BUDGET_MS + 1;
+        return { ok: true, status: 200, headers: {}, body: UPNP };
+      }
+    });
+    assert.deepStrictEqual(timed, ['http://192.168.1.1/a.xml']);
   });
 
   await checkAsync('router_detect GETs only a probeable gateway', async () => {

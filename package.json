@@ -1,6 +1,7 @@
 {
   "name": "home-network-check",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "description": "Local read-only home network check. No npm dependencies.",
   "engines": {
