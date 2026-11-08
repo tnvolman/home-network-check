@@ -6,24 +6,24 @@ Collectors run on macOS. On any other OS every tool returns `unsupported OS` and
 
 Michael McClanahan ([@tnvolman](https://github.com/tnvolman)). MIT License; see [LICENSE](LICENSE).
 
-## Setup
+## Install
 
-Node.js 20 or newer. Use the repository root as the working directory. There is nothing to install.
+Node.js 20 or newer. There are no npm dependencies.
 
-Cursor starts the server from `mcp.json`:
+Cursor loads `.cursor-plugin/plugin.json` (the root `plugin.json` matches it) and starts the server from `mcp.json`. From the Marketplace, open Customize, select Home Network Check, and choose Install. To load this repository before it is listed, copy it to `~/.cursor/plugins/local/home-network-check`. Cursor sets `CURSOR_PLUGIN_ROOT` to that directory.
 
 ```json
 {
   "mcpServers": {
     "home-network-check": {
       "command": "node",
-      "args": ["server/hnc-mcp.js"]
+      "args": ["${CURSOR_PLUGIN_ROOT}/server/hnc-mcp.js"]
     }
   }
 }
 ```
 
-`plugin.json` at the repository root, mirrored by `.cursor-plugin/plugin.json`, is the Cursor plugin manifest. The agent skill is `skills/home-network-check/SKILL.md`.
+The agent skill is `skills/home-network-check/SKILL.md`.
 
 ## Usage
 
@@ -54,3 +54,9 @@ node scripts/prove.js
 ```
 
 `npm run prove` is the same command.
+
+## Configuration
+
+No API keys, plugin variables, or required environment variables. The manifest `variables` field is unset, and `mcp.json` does not read a secret.
+
+`HNC_SKIP_NETWORK=1` is optional. When it is set, `speed_test` does not run Apple's `networkQuality` and returns a skipped result. `scripts/prove.js` sets it. Leave it unset for a real check.
