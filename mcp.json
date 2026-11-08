@@ -2,7 +2,7 @@
   "mcpServers": {
     "home-network-check": {
       "command": "node",
-      "args": ["server/hnc-mcp.js"]
+      "args": ["${CURSOR_PLUGIN_ROOT}/server/hnc-mcp.js"]
     }
   }
 }
